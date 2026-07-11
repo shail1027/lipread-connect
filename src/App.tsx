@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, CameraOff, CircleStop, Code2, Mic2, RefreshCw, ShieldCheck, Sparkles, Volume2 } from 'lucide-react'
+import { Camera, CameraOff, CircleStop, Code2, Mic2, RefreshCw, ShieldCheck, Volume2 } from 'lucide-react'
 import './App.css'
 
 type CameraState = 'idle' | 'loading' | 'active' | 'error'
@@ -59,10 +59,8 @@ function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="입모아 홈">
+        <a className="brand" href="#top" aria-label="서비스 홈">
           <span className="brand-mark"><Mic2 size={20} strokeWidth={2.4} /></span>
-          <span>입모아</span>
-          <span className="brand-beta">BETA</span>
         </a>
         <nav>
           <a href="#how-to">이용 안내</a>
@@ -71,12 +69,6 @@ function App() {
       </header>
 
       <main id="top">
-        <section className="hero">
-          <div className="eyebrow"><Sparkles size={15} /> AI 기반 한국어 립리딩</div>
-          <h1>당신의 입 모양이<br /><em>하나의 목소리</em>가 됩니다.</h1>
-          <p>카메라를 켜고 자연스럽게 말해 보세요.<br />입 모양을 분석해 문장으로 전달해 드려요.</p>
-        </section>
-
         <section className="workspace" aria-label="립리딩 체험">
           <div className="camera-card">
             <div className="card-heading">
@@ -103,7 +95,7 @@ function App() {
               ) : (
                 <>
                   <button className={`primary-button ${isReading ? 'reading' : ''}`} onClick={() => setIsReading((value) => !value)}>
-                    {isReading ? <CircleStop size={19} /> : <Sparkles size={19} />}{isReading ? '인식 멈추기' : '인식 시작하기'}
+                    {isReading ? <CircleStop size={19} /> : <Mic2 size={19} />}{isReading ? '인식 멈추기' : '인식 시작하기'}
                   </button>
                   <button className="icon-button" onClick={stopCamera} aria-label="카메라 끄기"><CameraOff size={19} /></button>
                 </>
@@ -112,7 +104,7 @@ function App() {
           </div>
 
           <aside className="result-card">
-            <div className="card-heading"><div><span className="result-icon"><Sparkles size={15} /></span> 인식 결과</div><span className="model-status">모델 연동 예정</span></div>
+            <div className="card-heading"><div><span className="result-icon"><Mic2 size={15} /></span> 인식 결과</div><span className="model-status">연결 대기</span></div>
             <div className="result-body">
               <div className={`wave ${isReading ? 'moving' : ''}`} aria-hidden="true">{[12, 22, 16, 29, 20, 34, 18, 26, 14, 22, 11].map((height, index) => <i key={index} style={{ height }} />)}</div>
               <p className="result-text">{isReading ? '입 모양을 살펴보고 있어요...' : '인식을 시작하면 이곳에 문장이 표시돼요.'}</p>
@@ -132,7 +124,7 @@ function App() {
         </section>
       </main>
 
-      <footer><span>입모아 · 한국어 립리딩 프로젝트</span><span>HumanRhoid × 한이음 드림업</span></footer>
+      <footer><span>한국어 립리딩 프로젝트</span><span>HumanRhoid × 한이음 드림업</span></footer>
     </div>
   )
 }

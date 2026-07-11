@@ -1,4 +1,4 @@
-# 입모아 (LipRead Connect)
+# LipRead Connect
 
 발성이 어려운 사용자의 입 모양을 한국어 문장으로 전달하기 위한 웹 인터페이스입니다. [HumanRhoid/hanium-lipreading](https://github.com/HumanRhoid/hanium-lipreading) 프로젝트의 모델·백엔드와 연결하는 것을 목표로 합니다.
 
