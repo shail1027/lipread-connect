@@ -25,6 +25,10 @@ main { max-width: 1160px; margin: auto; padding: 48px 24px 100px; }
 .status-dot.on { background: #43c592; box-shadow: 0 0 0 4px #e1f8ef; }
 .privacy, .model-status { color: #969baa; font-size: 10px; font-weight: 500; display: flex; align-items: center; gap: 4px; }
 .model-status { background: #f2f3f7; padding: 5px 8px; border-radius: 7px; }
+.model-status.connecting, .model-status.finishing { color: #7a641e; background: #fff6d9; }
+.model-status.recording { color: #256b55; background: #e1f8ef; }
+.model-status.complete { color: #315f9b; background: #e9f1ff; }
+.model-status.error { color: #b04452; background: #fff0f2; }
 .video-stage { aspect-ratio: 16 / 9; background: #f0f1f6; border-radius: 15px; overflow: hidden; position: relative; }
 .video-stage video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
 .camera-placeholder { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 20px; }
@@ -49,8 +53,11 @@ main { max-width: 1160px; margin: auto; padding: 48px 24px 100px; }
 .wave.moving i:nth-child(2n) { animation-delay: -.3s; }.wave.moving i:nth-child(3n) { animation-delay: -.5s; }
 @keyframes pulse { to { height: 8px; opacity: .55; } }
 .result-text { margin: 0; max-width: 230px; font-size: 14px; font-weight: 600; line-height: 1.65; color: #4c5160; }
+.result-text.error { color: #b04452; }
 .result-hint { margin: 9px 0 0; color: #a0a4b0; font-size: 10px; line-height: 1.6; }
 .speak-button { margin: 0 18px 18px; height: 42px; border-radius: 11px; display: flex; align-items: center; justify-content: center; gap: 7px; background: #f1f2f6; color: #afb2bc; font-size: 12px; font-weight: 600; }
+.speak-button:not(:disabled) { color: #163c32; background: #e8f0ed; cursor: pointer; }
+.speak-button:not(:disabled):hover { background: #dce9e4; }
 .how-to { margin-top: 84px; }
 .section-title { text-align: center; }.section-title span { color: #3e6c5f; font-size: 11px; font-weight: 700; }.section-title h2 { margin: 6px 0 30px; font-size: 25px; letter-spacing: -.04em; }
 .guide-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
