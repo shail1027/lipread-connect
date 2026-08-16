@@ -4,12 +4,25 @@ import {
   CameraOff,
   CircleStop,
   Code2,
+  LogIn,
+  LogOut,
   Mic2,
   RefreshCw,
+  Server,
   ShieldCheck,
+  UserRound,
   Volume2,
 } from 'lucide-react'
 import './App.css'
+import {
+  clearSession,
+  getCurrentUser,
+  loadSession,
+  logout,
+  type User,
+} from './api/auth'
+import { getLiveness, getReadiness } from './api/health'
+import { AuthDialog } from './components/AuthDialog'
 import { RECOGNITION_MIN_FRAMES } from './recognition/protocol'
 import {
   RecognitionSession,
@@ -24,6 +37,7 @@ type RecognitionState =
   | 'finishing'
   | 'complete'
   | 'error'
+type ServerState = 'checking' | 'ready' | 'degraded' | 'offline'
 
 const guideItems = [
   ['얼굴을 화면 중앙에 맞춰 주세요', '입술이 가이드 영역 안에 오면 인식률이 높아져요.'],
@@ -54,6 +68,12 @@ function App() {
   const [frameCount, setFrameCount] = useState(0)
   const [stopQueued, setStopQueued] = useState(false)
   const [result, setResult] = useState<RecognitionResult | null>(null)
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [sessionToken, setSessionToken] = useState<string | null>(null)
+  const [authLoading, setAuthLoading] = useState(true)
+  const [authDialogOpen, setAuthDialogOpen] = useState(false)
+  const [serverState, setServerState] = useState<ServerState>('checking')
+  const [serverStateDetail, setServerStateDetail] = useState('서버 상태 확인 중')
 
   const disposeRecognitionSession = () => {
     recognitionSessionRef.current?.dispose()
@@ -101,6 +121,15 @@ function App() {
       )
       setCameraState('error')
     }
+  }
+
+  const requestCameraStart = () => {
+    if (authLoading) return
+    if (!currentUser) {
+      setAuthDialogOpen(true)
+      return
+    }
+    void startCamera()
   }
 
   const startRecognition = () => {
@@ -182,12 +211,94 @@ function App() {
     window.speechSynthesis.speak(utterance)
   }
 
+  const handleAuthenticated = (user: User, token: string) => {
+    setCurrentUser(user)
+    setSessionToken(token)
+  }
+
+  const handleLogout = async () => {
+    stopCamera()
+    try {
+      if (sessionToken) await logout(sessionToken)
+    } catch {
+      // 서버가 오프라인이어도 브라우저의 세션은 종료한다.
+    } finally {
+      clearSession()
+      setCurrentUser(null)
+      setSessionToken(null)
+    }
+  }
+
+  useEffect(() => {
+    let active = true
+
+    const restoreSession = async () => {
+      const storedSession = loadSession()
+      if (!storedSession) {
+        if (active) setAuthLoading(false)
+        return
+      }
+
+      try {
+        const user = await getCurrentUser(storedSession.token)
+        if (active) {
+          setCurrentUser(user)
+          setSessionToken(storedSession.token)
+        }
+      } catch {
+        clearSession()
+      } finally {
+        if (active) setAuthLoading(false)
+      }
+    }
+
+    void restoreSession()
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+
+    const refreshServerState = async () => {
+      try {
+        await getLiveness()
+        const readiness = await getReadiness()
+        if (!active) return
+
+        if (readiness.status === 'ready') {
+          setServerState('ready')
+          setServerStateDetail('데이터베이스와 인식 모델 준비 완료')
+        } else {
+          setServerState('degraded')
+          setServerStateDetail(
+            `데이터베이스 ${readiness.database === 'ready' ? '준비됨' : '대기'} · 모델 ${readiness.inference === 'ready' ? '준비됨' : '대기'}`,
+          )
+        }
+      } catch {
+        if (active) {
+          setServerState('offline')
+          setServerStateDetail('백엔드 서버에 연결할 수 없음')
+        }
+      }
+    }
+
+    void refreshServerState()
+    const timer = window.setInterval(refreshServerState, 30_000)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [])
+
   useEffect(
     () => () => {
       recognitionSessionRef.current?.dispose()
       streamRef.current?.getTracks().forEach((track) => track.stop())
       window.speechSynthesis?.cancel()
     },
+    [],
   )
 
   const cameraActive = cameraState === 'active'
@@ -226,10 +337,38 @@ function App() {
         <a className="brand" href="#top" aria-label="서비스 홈">
           <span className="brand-mark"><Mic2 size={20} strokeWidth={2.4} /></span>
         </a>
-        <nav>
-          <a href="#how-to">이용 안내</a>
-          <a href="https://github.com/HumanRhoid/hanium-lipreading" target="_blank" rel="noreferrer"><Code2 size={17} /> 프로젝트</a>
-        </nav>
+        <div className="topbar-actions">
+          <span className={`server-state ${serverState}`} title={serverStateDetail}>
+            <Server size={14} />
+            {serverState === 'ready'
+              ? '서버 준비됨'
+              : serverState === 'degraded'
+                ? '서버 점검 필요'
+                : serverState === 'offline'
+                  ? '서버 연결 안 됨'
+                  : '서버 확인 중'}
+          </span>
+          <nav>
+            <a href="#how-to">이용 안내</a>
+            <a href="https://github.com/HumanRhoid/hanium-lipreading" target="_blank" rel="noreferrer"><Code2 size={17} /> 프로젝트</a>
+          </nav>
+          {currentUser ? (
+            <div className="account-menu">
+              <span className="account-name" title={`${currentUser.hospital}${currentUser.ward ? ` · ${currentUser.ward}` : ''}`}>
+                <UserRound size={15} /> {currentUser.name}
+              </span>
+              <button onClick={handleLogout} aria-label="로그아웃"><LogOut size={16} /></button>
+            </div>
+          ) : (
+            <button
+              className="login-button"
+              onClick={() => setAuthDialogOpen(true)}
+              disabled={authLoading}
+            >
+              <LogIn size={16} /> {authLoading ? '확인 중' : '로그인'}
+            </button>
+          )}
+        </div>
       </header>
 
       <main id="top">
@@ -255,7 +394,7 @@ function App() {
 
             <div className="camera-actions">
               {!cameraActive ? (
-                <button className="primary-button" onClick={startCamera} disabled={cameraState === 'loading'}><Camera size={19} /> {cameraState === 'loading' ? '연결 중...' : '카메라 시작하기'}</button>
+                <button className="primary-button" onClick={requestCameraStart} disabled={cameraState === 'loading' || authLoading}><Camera size={19} /> {cameraState === 'loading' ? '연결 중...' : currentUser ? '카메라 시작하기' : '로그인하고 시작하기'}</button>
               ) : (
                 <>
                   <button
@@ -303,6 +442,11 @@ function App() {
       </main>
 
       <footer><span>한국어 립리딩 프로젝트</span><span>HumanRhoid × 한이음 드림업</span></footer>
+      <AuthDialog
+        open={authDialogOpen}
+        onAuthenticated={handleAuthenticated}
+        onClose={() => setAuthDialogOpen(false)}
+      />
     </div>
   )
 }
