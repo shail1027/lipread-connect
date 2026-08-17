@@ -1,39 +1,86 @@
 import { useEffect, useRef, useState } from 'react'
-import { Camera, CameraOff, CircleStop, Code2, Mic2, RefreshCw, ShieldCheck, Volume2 } from 'lucide-react'
+import {
+  Camera,
+  CameraOff,
+  CircleStop,
+  Code2,
+  Mic2,
+  RefreshCw,
+  ShieldCheck,
+  Volume2,
+} from 'lucide-react'
 import './App.css'
+import { RECOGNITION_MIN_FRAMES } from './recognition/protocol'
+import {
+  RecognitionSession,
+  type RecognitionResult,
+} from './recognition/session'
 
 type CameraState = 'idle' | 'loading' | 'active' | 'error'
+type RecognitionState =
+  | 'idle'
+  | 'connecting'
+  | 'recording'
+  | 'finishing'
+  | 'complete'
+  | 'error'
 
 const guideItems = [
   ['얼굴을 화면 중앙에 맞춰 주세요', '입술이 가이드 영역 안에 오면 인식률이 높아져요.'],
   ['밝은 곳에서 정면을 바라봐 주세요', '역광이나 어두운 환경은 피하는 것이 좋아요.'],
-  ['평소처럼 자연스럽게 말해 주세요', '소리는 녹음하지 않고 입 모양만 분석할 예정이에요.'],
+  ['평소처럼 자연스럽게 말해 주세요', '소리는 녹음하지 않고 입 모양만 분석해요.'],
 ]
+
+const recognitionStatusLabels: Record<RecognitionState, string> = {
+  idle: '연결 대기',
+  connecting: '서버 연결 중',
+  recording: '인식 중',
+  finishing: '결과 처리 중',
+  complete: '인식 완료',
+  error: '연결 오류',
+}
 
 function App() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
+  const recognitionSessionRef = useRef<RecognitionSession | null>(null)
+  const recognitionTerminalRef = useRef(false)
+  const recognitionErrorRef = useRef(false)
+  const resultRef = useRef<RecognitionResult | null>(null)
   const [cameraState, setCameraState] = useState<CameraState>('idle')
-  const [errorMessage, setErrorMessage] = useState('')
-  const [isReading, setIsReading] = useState(false)
+  const [cameraError, setCameraError] = useState('')
+  const [recognitionState, setRecognitionState] = useState<RecognitionState>('idle')
+  const [recognitionError, setRecognitionError] = useState('')
+  const [frameCount, setFrameCount] = useState(0)
+  const [stopQueued, setStopQueued] = useState(false)
+  const [result, setResult] = useState<RecognitionResult | null>(null)
+
+  const disposeRecognitionSession = () => {
+    recognitionSessionRef.current?.dispose()
+    recognitionSessionRef.current = null
+  }
 
   const stopCamera = () => {
+    disposeRecognitionSession()
     streamRef.current?.getTracks().forEach((track) => track.stop())
     streamRef.current = null
     if (videoRef.current) videoRef.current.srcObject = null
     setCameraState('idle')
-    setIsReading(false)
+    setRecognitionState('idle')
+    setRecognitionError('')
+    setFrameCount(0)
+    setStopQueued(false)
   }
 
   const startCamera = async () => {
     if (!navigator.mediaDevices?.getUserMedia) {
-      setErrorMessage('이 브라우저에서는 카메라를 사용할 수 없어요.')
+      setCameraError('이 브라우저에서는 카메라를 사용할 수 없어요.')
       setCameraState('error')
       return
     }
 
     setCameraState('loading')
-    setErrorMessage('')
+    setCameraError('')
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
@@ -47,14 +94,131 @@ function App() {
       setCameraState('active')
     } catch (error) {
       const denied = error instanceof DOMException && error.name === 'NotAllowedError'
-      setErrorMessage(denied ? '카메라 권한이 차단되었어요. 브라우저 설정에서 권한을 허용해 주세요.' : '카메라를 불러오지 못했어요. 다른 앱에서 사용 중인지 확인해 주세요.')
+      setCameraError(
+        denied
+          ? '카메라 권한이 차단되었어요. 브라우저 설정에서 권한을 허용해 주세요.'
+          : '카메라를 불러오지 못했어요. 다른 앱에서 사용 중인지 확인해 주세요.',
+      )
       setCameraState('error')
     }
   }
 
-  useEffect(() => () => streamRef.current?.getTracks().forEach((track) => track.stop()), [])
+  const startRecognition = () => {
+    const video = videoRef.current
+    if (!video || cameraState !== 'active') return
+
+    disposeRecognitionSession()
+    recognitionTerminalRef.current = false
+    recognitionErrorRef.current = false
+    resultRef.current = null
+    setRecognitionError('')
+    setFrameCount(0)
+    setStopQueued(false)
+    setResult(null)
+
+    try {
+      const session = new RecognitionSession(video, {
+        onConnecting: () => setRecognitionState('connecting'),
+        onReady: () => setRecognitionState('recording'),
+        onFrame: setFrameCount,
+        onFinishing: () => {
+          setStopQueued(false)
+          setRecognitionState('finishing')
+        },
+        onResult: (nextResult) => {
+          recognitionTerminalRef.current = true
+          resultRef.current = nextResult
+          setResult(nextResult)
+          setRecognitionState('complete')
+        },
+        onServerError: (_code, message) => {
+          recognitionTerminalRef.current = true
+          recognitionErrorRef.current = true
+          setRecognitionError(message)
+          setRecognitionState('error')
+        },
+        onClientError: (message) => {
+          recognitionErrorRef.current = true
+          setRecognitionError(message)
+          setRecognitionState('error')
+        },
+        onStopped: () => {
+          recognitionTerminalRef.current = true
+          if (!recognitionErrorRef.current) {
+            setRecognitionState(resultRef.current ? 'complete' : 'idle')
+          }
+        },
+        onClosed: (code, wasClean) => {
+          recognitionSessionRef.current = null
+          if (!recognitionTerminalRef.current && (!wasClean || code !== 1000)) {
+            recognitionErrorRef.current = true
+            setRecognitionError('서버 연결이 예기치 않게 종료됐어요. 다시 시도해 주세요.')
+            setRecognitionState('error')
+          }
+        },
+      })
+      recognitionSessionRef.current = session
+      session.start()
+    } catch (error) {
+      recognitionErrorRef.current = true
+      setRecognitionError(
+        error instanceof Error ? error.message : '립리딩 연결을 시작하지 못했어요.',
+      )
+      setRecognitionState('error')
+    }
+  }
+
+  const stopRecognition = () => {
+    if (recognitionState !== 'recording' || stopQueued) return
+    setStopQueued(true)
+    recognitionSessionRef.current?.requestStop()
+  }
+
+  const speakResult = () => {
+    if (!result || !('speechSynthesis' in window)) return
+    window.speechSynthesis.cancel()
+    const utterance = new SpeechSynthesisUtterance(result.text)
+    utterance.lang = 'ko-KR'
+    window.speechSynthesis.speak(utterance)
+  }
+
+  useEffect(
+    () => () => {
+      recognitionSessionRef.current?.dispose()
+      streamRef.current?.getTracks().forEach((track) => track.stop())
+      window.speechSynthesis?.cancel()
+    },
+  )
 
   const cameraActive = cameraState === 'active'
+  const recognitionRunning = recognitionState === 'recording'
+  const recognitionBusy =
+    recognitionState === 'connecting' || recognitionState === 'finishing'
+  const recognitionButtonLabel = recognitionRunning
+    ? stopQueued
+      ? '종료 준비 중...'
+      : '인식 멈추기'
+    : recognitionState === 'complete' || recognitionState === 'error'
+      ? '다시 인식하기'
+      : recognitionState === 'connecting'
+        ? '서버 연결 중...'
+        : recognitionState === 'finishing'
+          ? '결과 처리 중...'
+          : '인식 시작하기'
+
+  const resultMessage = result
+    ? result.text
+    : recognitionState === 'recording'
+      ? stopQueued && frameCount < RECOGNITION_MIN_FRAMES
+        ? '인식에 필요한 영상을 조금 더 모으고 있어요...'
+        : '입 모양을 살펴보고 있어요...'
+      : recognitionState === 'connecting'
+        ? '립리딩 서버에 연결하고 있어요...'
+        : recognitionState === 'finishing'
+          ? '촬영한 영상에서 문장을 찾고 있어요...'
+          : recognitionState === 'error'
+            ? recognitionError
+            : '인식을 시작하면 이곳에 문장이 표시돼요.'
 
   return (
     <div className="app-shell">
@@ -83,7 +247,7 @@ function App() {
                 <div className="camera-placeholder">
                   <div className="camera-icon"><Camera size={34} /></div>
                   <strong>{cameraState === 'loading' ? '카메라를 불러오는 중...' : cameraState === 'error' ? '카메라를 확인해 주세요' : '카메라를 켜 주세요'}</strong>
-                  <p>{cameraState === 'error' ? errorMessage : '입 모양 인식을 위해 카메라 접근이 필요해요.'}</p>
+                  <p>{cameraState === 'error' ? cameraError : '입 모양 인식을 위해 카메라 접근이 필요해요.'}</p>
                   {cameraState === 'error' && <button className="text-button" onClick={startCamera}><RefreshCw size={15} /> 다시 시도</button>}
                 </div>
               )}
@@ -94,8 +258,13 @@ function App() {
                 <button className="primary-button" onClick={startCamera} disabled={cameraState === 'loading'}><Camera size={19} /> {cameraState === 'loading' ? '연결 중...' : '카메라 시작하기'}</button>
               ) : (
                 <>
-                  <button className={`primary-button ${isReading ? 'reading' : ''}`} onClick={() => setIsReading((value) => !value)}>
-                    {isReading ? <CircleStop size={19} /> : <Mic2 size={19} />}{isReading ? '인식 멈추기' : '인식 시작하기'}
+                  <button
+                    className={`primary-button ${recognitionRunning ? 'reading' : ''}`}
+                    onClick={recognitionRunning ? stopRecognition : startRecognition}
+                    disabled={recognitionBusy || stopQueued}
+                  >
+                    {recognitionRunning ? <CircleStop size={19} /> : <Mic2 size={19} />}
+                    {recognitionButtonLabel}
                   </button>
                   <button className="icon-button" onClick={stopCamera} aria-label="카메라 끄기"><CameraOff size={19} /></button>
                 </>
@@ -103,14 +272,23 @@ function App() {
             </div>
           </div>
 
-          <aside className="result-card">
-            <div className="card-heading"><div><span className="result-icon"><Mic2 size={15} /></span> 인식 결과</div><span className="model-status">연결 대기</span></div>
-            <div className="result-body">
-              <div className={`wave ${isReading ? 'moving' : ''}`} aria-hidden="true">{[12, 22, 16, 29, 20, 34, 18, 26, 14, 22, 11].map((height, index) => <i key={index} style={{ height }} />)}</div>
-              <p className="result-text">{isReading ? '입 모양을 살펴보고 있어요...' : '인식을 시작하면 이곳에 문장이 표시돼요.'}</p>
-              <p className="result-hint">모델과 백엔드 연결 후<br />실시간 인식 결과가 제공됩니다.</p>
+          <aside className="result-card" aria-live="polite">
+            <div className="card-heading">
+              <div><span className="result-icon"><Mic2 size={15} /></span> 인식 결과</div>
+              <span className={`model-status ${recognitionState}`}>{recognitionStatusLabels[recognitionState]}</span>
             </div>
-            <button className="speak-button" disabled><Volume2 size={18} /> 문장 읽어주기</button>
+            <div className="result-body">
+              <div className={`wave ${recognitionRunning ? 'moving' : ''}`} aria-hidden="true">{[12, 22, 16, 29, 20, 34, 18, 26, 14, 22, 11].map((height, index) => <i key={index} style={{ height }} />)}</div>
+              <p className={`result-text ${recognitionState === 'error' ? 'error' : ''}`}>{resultMessage}</p>
+              <p className="result-hint">
+                {recognitionRunning
+                  ? `${frameCount}프레임 전송 · ${Math.max(0, RECOGNITION_MIN_FRAMES - frameCount)}프레임 후 종료 가능`
+                  : result?.confidence != null
+                    ? `인식 신뢰도 ${Math.round(result.confidence * 100)}%`
+                    : '촬영이 끝나면 한 번의 최종 결과를 제공해요.'}
+              </p>
+            </div>
+            <button className="speak-button" disabled={!result} onClick={speakResult}><Volume2 size={18} /> 문장 읽어주기</button>
           </aside>
         </section>
 
