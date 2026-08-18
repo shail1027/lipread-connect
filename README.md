@@ -8,6 +8,8 @@
 - 사용자에게 자연스러운 좌우 미러링 영상 제공
 - 카메라 권한 거절·미지원·사용 중 오류 처리
 - FastAPI v1 WebSocket 립리딩 세션 연결
+- 백엔드 liveness/readiness 상태 확인
+- 의료진 회원가입, 로그인, 세션 복원, 로그아웃
 - 640x360 JPEG 프레임을 약 25fps로 binary 전송
 - 인식 시작/중지, 서버 오류, 최종 문장과 신뢰도 표시
 - 인식 결과 Web Speech API 읽어주기
@@ -41,6 +43,7 @@ npm run dev
 
 | 변수 | 기본값 | 설명 |
 |---|---|---|
+| `VITE_API_BASE_URL` | `http://localhost:8000` | health와 인증 HTTP API origin |
 | `VITE_RECOGNITION_WS_URL` | `ws://localhost:8000/api/v1/recognition/stream` | FastAPI v1 립리딩 WebSocket endpoint |
 
 로컬 프론트 주소는 백엔드의 `ALLOWED_ORIGINS`에 포함되어야 합니다. 기본 구성은 `http://localhost:5173`을 허용합니다. HTTPS로 배포할 때는 WebSocket 주소도 `wss://`를 사용해야 합니다.
@@ -52,6 +55,20 @@ npm run dev
 3. `ready` 이후 카메라 영상을 640x360 JPEG binary로 전송합니다.
 4. 인식을 멈추면 최소 30프레임을 확보한 뒤 `stop`을 보냅니다.
 5. 서버의 최종 `result`와 `stopped` 이벤트를 화면에 반영합니다.
+
+## 연결된 API
+
+| 방식 | 경로 | 사용처 |
+|---|---|---|
+| `GET` | `/health/live` | 백엔드 프로세스 연결 확인 |
+| `GET` | `/health/ready` | 데이터베이스와 추론 모델 준비 상태 표시 |
+| `POST` | `/api/v1/auth/signup` | 의료진 회원가입 |
+| `POST` | `/api/v1/auth/login` | 로그인 세션 발급 |
+| `GET` | `/api/v1/auth/me` | 로그인 사용자 확인과 세션 복원 |
+| `POST` | `/api/v1/auth/logout` | 로그인 세션 무효화 |
+| `WS` | `/api/v1/recognition/stream` | 카메라 프레임 전송과 최종 립리딩 결과 수신 |
+
+로그인 세션 토큰은 브라우저 탭의 `sessionStorage`에만 보관하며 인증 HTTP 요청의 `X-Session-Token` 헤더로 전송합니다.
 
 ## 기술 스택
 
