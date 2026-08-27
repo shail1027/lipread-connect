@@ -3,17 +3,13 @@ import { apiRequest } from './client'
 export type User = {
   user_id: number
   username: string
-  name: string
-  hospital: string
-  ward: string | null
+  display_name: string
 }
 
 export type SignupInput = {
   username: string
   password: string
-  name: string
-  hospital: string
-  ward: string | null
+  display_name: string
 }
 
 export type LoginInput = {

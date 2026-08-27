@@ -22,19 +22,25 @@ import {
   type User,
 } from './api/auth'
 import { getLiveness, getReadiness } from './api/health'
-import { AuthDialog } from './components/AuthDialog'
-import { RECOGNITION_MIN_FRAMES } from './recognition/protocol'
 import {
-  RecognitionSession,
-  type RecognitionResult,
-} from './recognition/session'
+  uploadRecognitionVideo,
+  waitForInferenceResult,
+  type InferenceResult,
+} from './api/recognition'
+import { AuthDialog } from './components/AuthDialog'
+import {
+  MAX_RECORDING_MS,
+  MIN_RECORDING_MS,
+  VideoRecordingSession,
+} from './recognition/recording'
 
 type CameraState = 'idle' | 'loading' | 'active' | 'error'
 type RecognitionState =
   | 'idle'
-  | 'connecting'
   | 'recording'
-  | 'finishing'
+  | 'uploading'
+  | 'queued'
+  | 'processing'
   | 'complete'
   | 'error'
 type ServerState = 'checking' | 'ready' | 'degraded' | 'offline'
@@ -42,32 +48,34 @@ type ServerState = 'checking' | 'ready' | 'degraded' | 'offline'
 const guideItems = [
   ['얼굴을 화면 중앙에 맞춰 주세요', '입술이 가이드 영역 안에 오면 인식률이 높아져요.'],
   ['밝은 곳에서 정면을 바라봐 주세요', '역광이나 어두운 환경은 피하는 것이 좋아요.'],
-  ['평소처럼 자연스럽게 말해 주세요', '소리는 녹음하지 않고 입 모양만 분석해요.'],
+  ['3초 이상 자연스럽게 말해 주세요', '최대 10초가 되면 촬영이 자동으로 끝나요.'],
 ]
 
 const recognitionStatusLabels: Record<RecognitionState, string> = {
-  idle: '연결 대기',
-  connecting: '서버 연결 중',
-  recording: '인식 중',
-  finishing: '결과 처리 중',
+  idle: '촬영 대기',
+  recording: '촬영 중',
+  uploading: '업로드 중',
+  queued: '처리 대기',
+  processing: '분석 중',
   complete: '인식 완료',
-  error: '연결 오류',
+  error: '처리 오류',
 }
 
 function App() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const recognitionSessionRef = useRef<RecognitionSession | null>(null)
-  const recognitionTerminalRef = useRef(false)
-  const recognitionErrorRef = useRef(false)
-  const resultRef = useRef<RecognitionResult | null>(null)
+  const recorderRef = useRef<VideoRecordingSession | null>(null)
+  const progressTimerRef = useRef<number | null>(null)
+  const autoStopTimerRef = useRef<number | null>(null)
+  const minimumStopTimerRef = useRef<number | null>(null)
+  const pollAbortRef = useRef<AbortController | null>(null)
   const [cameraState, setCameraState] = useState<CameraState>('idle')
   const [cameraError, setCameraError] = useState('')
   const [recognitionState, setRecognitionState] = useState<RecognitionState>('idle')
   const [recognitionError, setRecognitionError] = useState('')
-  const [frameCount, setFrameCount] = useState(0)
+  const [elapsedMs, setElapsedMs] = useState(0)
   const [stopQueued, setStopQueued] = useState(false)
-  const [result, setResult] = useState<RecognitionResult | null>(null)
+  const [result, setResult] = useState<InferenceResult | null>(null)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [sessionToken, setSessionToken] = useState<string | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
@@ -75,20 +83,38 @@ function App() {
   const [serverState, setServerState] = useState<ServerState>('checking')
   const [serverStateDetail, setServerStateDetail] = useState('서버 상태 확인 중')
 
-  const disposeRecognitionSession = () => {
-    recognitionSessionRef.current?.dispose()
-    recognitionSessionRef.current = null
+  const clearRecordingTimers = () => {
+    if (progressTimerRef.current !== null) {
+      window.clearInterval(progressTimerRef.current)
+      progressTimerRef.current = null
+    }
+    if (autoStopTimerRef.current !== null) {
+      window.clearTimeout(autoStopTimerRef.current)
+      autoStopTimerRef.current = null
+    }
+    if (minimumStopTimerRef.current !== null) {
+      window.clearTimeout(minimumStopTimerRef.current)
+      minimumStopTimerRef.current = null
+    }
+  }
+
+  const disposeRecognition = () => {
+    clearRecordingTimers()
+    recorderRef.current?.cancel()
+    recorderRef.current = null
+    pollAbortRef.current?.abort()
+    pollAbortRef.current = null
   }
 
   const stopCamera = () => {
-    disposeRecognitionSession()
+    disposeRecognition()
     streamRef.current?.getTracks().forEach((track) => track.stop())
     streamRef.current = null
     if (videoRef.current) videoRef.current.srcObject = null
     setCameraState('idle')
     setRecognitionState('idle')
     setRecognitionError('')
-    setFrameCount(0)
+    setElapsedMs(0)
     setStopQueued(false)
   }
 
@@ -103,7 +129,12 @@ function App() {
     setCameraError('')
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
+        video: {
+          facingMode: 'user',
+          width: { ideal: 640 },
+          height: { ideal: 360 },
+          frameRate: { ideal: 25, max: 25 },
+        },
         audio: false,
       })
       streamRef.current = stream
@@ -132,75 +163,90 @@ function App() {
     void startCamera()
   }
 
-  const startRecognition = () => {
-    const video = videoRef.current
-    if (!video || cameraState !== 'active') return
+  async function finishRecognition() {
+    const recorder = recorderRef.current
+    const token = sessionToken
+    if (!recorder || !token) return
 
-    disposeRecognitionSession()
-    recognitionTerminalRef.current = false
-    recognitionErrorRef.current = false
-    resultRef.current = null
-    setRecognitionError('')
-    setFrameCount(0)
+    recorderRef.current = null
+    clearRecordingTimers()
+    setElapsedMs(Math.min(recorder.elapsedMs, MAX_RECORDING_MS))
     setStopQueued(false)
-    setResult(null)
+    setRecognitionState('uploading')
+    const abortController = new AbortController()
+    pollAbortRef.current = abortController
 
     try {
-      const session = new RecognitionSession(video, {
-        onConnecting: () => setRecognitionState('connecting'),
-        onReady: () => setRecognitionState('recording'),
-        onFrame: setFrameCount,
-        onFinishing: () => {
-          setStopQueued(false)
-          setRecognitionState('finishing')
-        },
-        onResult: (nextResult) => {
-          recognitionTerminalRef.current = true
-          resultRef.current = nextResult
-          setResult(nextResult)
-          setRecognitionState('complete')
-        },
-        onServerError: (_code, message) => {
-          recognitionTerminalRef.current = true
-          recognitionErrorRef.current = true
-          setRecognitionError(message)
-          setRecognitionState('error')
-        },
-        onClientError: (message) => {
-          recognitionErrorRef.current = true
-          setRecognitionError(message)
-          setRecognitionState('error')
-        },
-        onStopped: () => {
-          recognitionTerminalRef.current = true
-          if (!recognitionErrorRef.current) {
-            setRecognitionState(resultRef.current ? 'complete' : 'idle')
-          }
-        },
-        onClosed: (code, wasClean) => {
-          recognitionSessionRef.current = null
-          if (!recognitionTerminalRef.current && (!wasClean || code !== 1000)) {
-            recognitionErrorRef.current = true
-            setRecognitionError('서버 연결이 예기치 않게 종료됐어요. 다시 시도해 주세요.')
-            setRecognitionState('error')
-          }
+      const video = await recorder.stop()
+      if (abortController.signal.aborted) {
+        throw new DOMException('요청이 취소됐습니다.', 'AbortError')
+      }
+      const upload = await uploadRecognitionVideo(video, token, abortController.signal)
+      setRecognitionState('queued')
+
+      const inferenceResult = await waitForInferenceResult(upload.job_id, token, {
+        signal: abortController.signal,
+        onStatus: (status) => {
+          if (status === 'PROCESSING') setRecognitionState('processing')
         },
       })
-      recognitionSessionRef.current = session
-      session.start()
+      setResult(inferenceResult)
+      setRecognitionState('complete')
     } catch (error) {
-      recognitionErrorRef.current = true
+      if (error instanceof DOMException && error.name === 'AbortError') return
       setRecognitionError(
-        error instanceof Error ? error.message : '립리딩 연결을 시작하지 못했어요.',
+        error instanceof Error ? error.message : '영상을 처리하지 못했어요.',
+      )
+      setRecognitionState('error')
+    } finally {
+      if (pollAbortRef.current === abortController) pollAbortRef.current = null
+    }
+  }
+
+  const startRecognition = () => {
+    const stream = streamRef.current
+    if (!stream || cameraState !== 'active' || !sessionToken) return
+
+    disposeRecognition()
+    setRecognitionError('')
+    setResult(null)
+    setElapsedMs(0)
+    setStopQueued(false)
+
+    try {
+      const recorder = new VideoRecordingSession(stream)
+      recorderRef.current = recorder
+      recorder.start()
+      setRecognitionState('recording')
+
+      progressTimerRef.current = window.setInterval(() => {
+        setElapsedMs(recorder.elapsedMs)
+      }, 100)
+      autoStopTimerRef.current = window.setTimeout(() => {
+        void finishRecognition()
+      }, MAX_RECORDING_MS)
+    } catch (error) {
+      setRecognitionError(
+        error instanceof Error ? error.message : '영상 녹화를 시작하지 못했어요.',
       )
       setRecognitionState('error')
     }
   }
 
-  const stopRecognition = () => {
-    if (recognitionState !== 'recording' || stopQueued) return
-    setStopQueued(true)
-    recognitionSessionRef.current?.requestStop()
+  const requestRecognitionStop = () => {
+    const recorder = recorderRef.current
+    if (!recorder || stopQueued) return
+
+    const remainingMs = MIN_RECORDING_MS - recorder.elapsedMs
+    if (remainingMs > 0) {
+      setStopQueued(true)
+      minimumStopTimerRef.current = window.setTimeout(() => {
+        void finishRecognition()
+      }, remainingMs)
+      return
+    }
+
+    void finishRecognition()
   }
 
   const speakResult = () => {
@@ -294,7 +340,9 @@ function App() {
 
   useEffect(
     () => () => {
-      recognitionSessionRef.current?.dispose()
+      clearRecordingTimers()
+      recorderRef.current?.cancel()
+      pollAbortRef.current?.abort()
       streamRef.current?.getTracks().forEach((track) => track.stop())
       window.speechSynthesis?.cancel()
     },
@@ -303,33 +351,36 @@ function App() {
 
   const cameraActive = cameraState === 'active'
   const recognitionRunning = recognitionState === 'recording'
-  const recognitionBusy =
-    recognitionState === 'connecting' || recognitionState === 'finishing'
+  const recognitionBusy = ['uploading', 'queued', 'processing'].includes(recognitionState)
   const recognitionButtonLabel = recognitionRunning
     ? stopQueued
-      ? '종료 준비 중...'
-      : '인식 멈추기'
+      ? '촬영 마무리 중...'
+      : '촬영 끝내기'
     : recognitionState === 'complete' || recognitionState === 'error'
-      ? '다시 인식하기'
-      : recognitionState === 'connecting'
-        ? '서버 연결 중...'
-        : recognitionState === 'finishing'
-          ? '결과 처리 중...'
-          : '인식 시작하기'
+      ? '다시 촬영하기'
+      : recognitionState === 'uploading'
+        ? '영상 업로드 중...'
+        : recognitionState === 'queued'
+          ? '처리 대기 중...'
+          : recognitionState === 'processing'
+            ? '모델 분석 중...'
+            : '인식 시작하기'
 
   const resultMessage = result
     ? result.text
     : recognitionState === 'recording'
-      ? stopQueued && frameCount < RECOGNITION_MIN_FRAMES
-        ? '인식에 필요한 영상을 조금 더 모으고 있어요...'
-        : '입 모양을 살펴보고 있어요...'
-      : recognitionState === 'connecting'
-        ? '립리딩 서버에 연결하고 있어요...'
-        : recognitionState === 'finishing'
-          ? '촬영한 영상에서 문장을 찾고 있어요...'
-          : recognitionState === 'error'
-            ? recognitionError
-            : '인식을 시작하면 이곳에 문장이 표시돼요.'
+      ? stopQueued
+        ? '인식에 필요한 영상을 조금 더 촬영하고 있어요...'
+        : '입 모양을 촬영하고 있어요...'
+      : recognitionState === 'uploading'
+        ? '촬영한 영상을 안전하게 전송하고 있어요...'
+        : recognitionState === 'queued'
+          ? '인식 순서를 기다리고 있어요...'
+          : recognitionState === 'processing'
+            ? '영상에서 입 모양을 분석하고 있어요...'
+            : recognitionState === 'error'
+              ? recognitionError
+              : '인식을 시작하면 이곳에 문장이 표시돼요.'
 
   return (
     <div className="app-shell">
@@ -354,8 +405,8 @@ function App() {
           </nav>
           {currentUser ? (
             <div className="account-menu">
-              <span className="account-name" title={`${currentUser.hospital}${currentUser.ward ? ` · ${currentUser.ward}` : ''}`}>
-                <UserRound size={15} /> {currentUser.name}
+              <span className="account-name" title={currentUser.username}>
+                <UserRound size={15} /> {currentUser.display_name}
               </span>
               <button onClick={handleLogout} aria-label="로그아웃"><LogOut size={16} /></button>
             </div>
@@ -376,7 +427,7 @@ function App() {
           <div className="camera-card">
             <div className="card-heading">
               <div><span className={`status-dot ${cameraActive ? 'on' : ''}`} /> 카메라</div>
-              <span className="privacy"><ShieldCheck size={15} /> 영상은 저장되지 않아요</span>
+              <span className="privacy"><ShieldCheck size={15} /> 영상은 추론을 위해 임시 업로드돼요</span>
             </div>
 
             <div className={`video-stage ${cameraActive ? 'is-live' : ''}`}>
@@ -399,13 +450,13 @@ function App() {
                 <>
                   <button
                     className={`primary-button ${recognitionRunning ? 'reading' : ''}`}
-                    onClick={recognitionRunning ? stopRecognition : startRecognition}
+                    onClick={recognitionRunning ? requestRecognitionStop : startRecognition}
                     disabled={recognitionBusy || stopQueued}
                   >
                     {recognitionRunning ? <CircleStop size={19} /> : <Mic2 size={19} />}
                     {recognitionButtonLabel}
                   </button>
-                  <button className="icon-button" onClick={stopCamera} aria-label="카메라 끄기"><CameraOff size={19} /></button>
+                  <button className="icon-button" onClick={stopCamera} disabled={recognitionRunning || recognitionBusy} aria-label="카메라 끄기"><CameraOff size={19} /></button>
                 </>
               )}
             </div>
@@ -417,14 +468,14 @@ function App() {
               <span className={`model-status ${recognitionState}`}>{recognitionStatusLabels[recognitionState]}</span>
             </div>
             <div className="result-body">
-              <div className={`wave ${recognitionRunning ? 'moving' : ''}`} aria-hidden="true">{[12, 22, 16, 29, 20, 34, 18, 26, 14, 22, 11].map((height, index) => <i key={index} style={{ height }} />)}</div>
+              <div className={`wave ${recognitionRunning || recognitionBusy ? 'moving' : ''}`} aria-hidden="true">{[12, 22, 16, 29, 20, 34, 18, 26, 14, 22, 11].map((height, index) => <i key={index} style={{ height }} />)}</div>
               <p className={`result-text ${recognitionState === 'error' ? 'error' : ''}`}>{resultMessage}</p>
               <p className="result-hint">
                 {recognitionRunning
-                  ? `${frameCount}프레임 전송 · ${Math.max(0, RECOGNITION_MIN_FRAMES - frameCount)}프레임 후 종료 가능`
+                  ? `${Math.min(elapsedMs / 1000, MAX_RECORDING_MS / 1000).toFixed(1)}초 촬영 · 최대 ${MAX_RECORDING_MS / 1000}초`
                   : result?.confidence != null
                     ? `인식 신뢰도 ${Math.round(result.confidence * 100)}%`
-                    : '촬영이 끝나면 한 번의 최종 결과를 제공해요.'}
+                    : '촬영이 끝나면 서버에서 최종 결과를 제공해요.'}
               </p>
             </div>
             <button className="speak-button" disabled={!result} onClick={speakResult}><Volume2 size={18} /> 문장 읽어주기</button>
