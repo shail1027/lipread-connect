@@ -43,13 +43,16 @@ export async function apiRequest<T>(
   options: RequestOptions = {},
 ): Promise<T> {
   const { acceptedStatuses = [], sessionToken, headers, ...requestInit } = options
+  const requestHeaders = new Headers(headers)
+
+  if (requestInit.body && !(requestInit.body instanceof FormData)) {
+    requestHeaders.set('Content-Type', 'application/json')
+  }
+  if (sessionToken) requestHeaders.set('X-Session-Token', sessionToken)
+
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...requestInit,
-    headers: {
-      ...(requestInit.body ? { 'Content-Type': 'application/json' } : {}),
-      ...(sessionToken ? { 'X-Session-Token': sessionToken } : {}),
-      ...headers,
-    },
+    headers: requestHeaders,
   })
 
   const payload: unknown = await response.json().catch(() => null)

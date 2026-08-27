@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { Building2, LogIn, UserPlus, X } from 'lucide-react'
+import { LogIn, UserPlus, UserRound, X } from 'lucide-react'
 import {
   clearSession,
   getCurrentUser,
@@ -17,17 +17,11 @@ type AuthDialogProps = {
   onClose: () => void
 }
 
-const emptySignupFields = {
-  name: '',
-  hospital: '',
-  ward: '',
-}
-
 export function AuthDialog({ open, onAuthenticated, onClose }: AuthDialogProps) {
   const [mode, setMode] = useState<AuthMode>('login')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
-  const [signupFields, setSignupFields] = useState(emptySignupFields)
+  const [displayName, setDisplayName] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
 
@@ -52,9 +46,7 @@ export function AuthDialog({ open, onAuthenticated, onClose }: AuthDialogProps) 
         await signup({
           username,
           password,
-          name: signupFields.name,
-          hospital: signupFields.hospital,
-          ward: signupFields.ward.trim() || null,
+          display_name: displayName,
         })
       }
 
@@ -63,7 +55,7 @@ export function AuthDialog({ open, onAuthenticated, onClose }: AuthDialogProps) 
       const user = await getCurrentUser(session.session_token)
       onAuthenticated(user, session.session_token)
       setPassword('')
-      setSignupFields(emptySignupFields)
+      setDisplayName('')
       onClose()
     } catch (requestError) {
       clearSession()
@@ -91,9 +83,9 @@ export function AuthDialog({ open, onAuthenticated, onClose }: AuthDialogProps) 
         </button>
 
         <div className="auth-heading">
-          <span className="auth-symbol"><Building2 size={20} /></span>
+          <span className="auth-symbol"><UserRound size={20} /></span>
           <div>
-            <span>의료진 계정</span>
+            <span>립리딩 사용자 계정</span>
             <h2 id="auth-title">{mode === 'login' ? '로그인' : '회원가입'}</h2>
           </div>
         </div>
@@ -119,44 +111,17 @@ export function AuthDialog({ open, onAuthenticated, onClose }: AuthDialogProps) 
 
         <form className="auth-form" onSubmit={handleSubmit}>
           {mode === 'signup' && (
-            <>
-              <label>
-                이름
-                <input
-                  value={signupFields.name}
-                  onChange={(event) =>
-                    setSignupFields((fields) => ({ ...fields, name: event.target.value }))
-                  }
-                  autoComplete="name"
-                  minLength={1}
-                  maxLength={50}
-                  required
-                />
-              </label>
-              <label>
-                병원
-                <input
-                  value={signupFields.hospital}
-                  onChange={(event) =>
-                    setSignupFields((fields) => ({ ...fields, hospital: event.target.value }))
-                  }
-                  autoComplete="organization"
-                  minLength={1}
-                  maxLength={100}
-                  required
-                />
-              </label>
-              <label>
-                병동 <span>선택</span>
-                <input
-                  value={signupFields.ward}
-                  onChange={(event) =>
-                    setSignupFields((fields) => ({ ...fields, ward: event.target.value }))
-                  }
-                  maxLength={100}
-                />
-              </label>
-            </>
+            <label>
+              표시 이름
+              <input
+                value={displayName}
+                onChange={(event) => setDisplayName(event.target.value)}
+                autoComplete="name"
+                minLength={1}
+                maxLength={50}
+                required
+              />
+            </label>
           )}
 
           <label>
