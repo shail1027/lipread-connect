@@ -6,6 +6,8 @@ export type User = {
   display_name: string
 }
 
+export type UserRole = 'PATIENT' | 'STAFF'
+
 export type SignupInput = {
   username: string
   password: string
@@ -25,6 +27,7 @@ export type LoginSession = {
 type StoredSession = {
   token: string
   expiresAt: string
+  role: UserRole
 }
 
 const SESSION_STORAGE_KEY = 'lipread-connect-session'
@@ -50,10 +53,11 @@ export const logout = (sessionToken: string) =>
     sessionToken,
   })
 
-export function saveSession(session: LoginSession): void {
+export function saveSession(session: LoginSession, role: UserRole = 'PATIENT'): void {
   const storedSession: StoredSession = {
     token: session.session_token,
     expiresAt: session.expires_at,
+    role,
   }
   window.sessionStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(storedSession))
 }
@@ -72,7 +76,8 @@ export function loadSession(): StoredSession | null {
       clearSession()
       return null
     }
-    return { token: session.token, expiresAt: session.expiresAt }
+    const role: UserRole = session.role === 'STAFF' ? 'STAFF' : 'PATIENT'
+    return { token: session.token, expiresAt: session.expiresAt, role }
   } catch {
     clearSession()
     return null
