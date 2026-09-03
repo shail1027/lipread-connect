@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { LogIn, UserPlus, UserRound, X } from 'lucide-react'
+import { HeartPulse, LogIn, UserPlus, UserRound, X } from 'lucide-react'
 import {
   clearSession,
   getCurrentUser,
@@ -7,18 +7,20 @@ import {
   saveSession,
   signup,
   type User,
+  type UserRole,
 } from '../api/auth'
 
 type AuthMode = 'login' | 'signup'
 
 type AuthDialogProps = {
   open: boolean
-  onAuthenticated: (user: User, sessionToken: string) => void
+  onAuthenticated: (user: User, sessionToken: string, role: UserRole) => void
   onClose: () => void
 }
 
 export function AuthDialog({ open, onAuthenticated, onClose }: AuthDialogProps) {
   const [mode, setMode] = useState<AuthMode>('login')
+  const [role, setRole] = useState<UserRole>('PATIENT')
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [displayName, setDisplayName] = useState('')
@@ -33,6 +35,12 @@ export function AuthDialog({ open, onAuthenticated, onClose }: AuthDialogProps) 
 
   const changeMode = (nextMode: AuthMode) => {
     setMode(nextMode)
+    setError('')
+  }
+
+  const changeRole = (nextRole: UserRole) => {
+    setRole(nextRole)
+    setMode('login')
     setError('')
   }
 
@@ -51,9 +59,9 @@ export function AuthDialog({ open, onAuthenticated, onClose }: AuthDialogProps) 
       }
 
       const session = await login({ username, password })
-      saveSession(session)
+      saveSession(session, role)
       const user = await getCurrentUser(session.session_token)
-      onAuthenticated(user, session.session_token)
+      onAuthenticated(user, session.session_token, role)
       setPassword('')
       setDisplayName('')
       onClose()
@@ -83,14 +91,37 @@ export function AuthDialog({ open, onAuthenticated, onClose }: AuthDialogProps) 
         </button>
 
         <div className="auth-heading">
-          <span className="auth-symbol"><UserRound size={20} /></span>
+          <span className="auth-symbol">
+            {role === 'STAFF' ? <HeartPulse size={20} /> : <UserRound size={20} />}
+          </span>
           <div>
             <span>립리딩 사용자 계정</span>
-            <h2 id="auth-title">{mode === 'login' ? '로그인' : '회원가입'}</h2>
+            <h2 id="auth-title">
+              {mode === 'signup' ? '회원가입' : role === 'STAFF' ? '의료진 로그인' : '환자 로그인'}
+            </h2>
           </div>
         </div>
 
-        <div className="auth-tabs" role="tablist" aria-label="계정 메뉴">
+        <div className="role-tabs" role="tablist" aria-label="사용자 역할">
+          <button
+            className={role === 'PATIENT' ? 'active' : ''}
+            onClick={() => changeRole('PATIENT')}
+            role="tab"
+            aria-selected={role === 'PATIENT'}
+          >
+            <UserRound size={15} /> 환자
+          </button>
+          <button
+            className={role === 'STAFF' ? 'active' : ''}
+            onClick={() => changeRole('STAFF')}
+            role="tab"
+            aria-selected={role === 'STAFF'}
+          >
+            <HeartPulse size={15} /> 의료진
+          </button>
+        </div>
+
+        {role === 'PATIENT' && <div className="auth-tabs" role="tablist" aria-label="계정 메뉴">
           <button
             className={mode === 'login' ? 'active' : ''}
             onClick={() => changeMode('login')}
@@ -107,7 +138,13 @@ export function AuthDialog({ open, onAuthenticated, onClose }: AuthDialogProps) 
           >
             회원가입
           </button>
-        </div>
+        </div>}
+
+        {role === 'STAFF' && (
+          <p className="staff-login-hint">
+            병원에서 발급한 의료진 계정으로 로그인해 주세요.
+          </p>
+        )}
 
         <form className="auth-form" onSubmit={handleSubmit}>
           {mode === 'signup' && (
@@ -155,7 +192,7 @@ export function AuthDialog({ open, onAuthenticated, onClose }: AuthDialogProps) 
             {submitting
               ? '처리 중...'
               : mode === 'login'
-                ? '로그인하기'
+                ? role === 'STAFF' ? '의료진으로 로그인' : '로그인하기'
                 : '가입하고 로그인하기'}
           </button>
         </form>

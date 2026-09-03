@@ -20,6 +20,7 @@ import {
   loadSession,
   logout,
   type User,
+  type UserRole,
 } from './api/auth'
 import { getLiveness, getReadiness } from './api/health'
 import {
@@ -28,6 +29,7 @@ import {
   type InferenceResult,
 } from './api/recognition'
 import { AuthDialog } from './components/AuthDialog'
+import { MedicalDashboard } from './components/MedicalDashboard'
 import {
   MAX_RECORDING_MS,
   MIN_RECORDING_MS,
@@ -77,6 +79,7 @@ function App() {
   const [stopQueued, setStopQueued] = useState(false)
   const [result, setResult] = useState<InferenceResult | null>(null)
   const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [currentRole, setCurrentRole] = useState<UserRole>('PATIENT')
   const [sessionToken, setSessionToken] = useState<string | null>(null)
   const [authLoading, setAuthLoading] = useState(true)
   const [authDialogOpen, setAuthDialogOpen] = useState(false)
@@ -257,9 +260,10 @@ function App() {
     window.speechSynthesis.speak(utterance)
   }
 
-  const handleAuthenticated = (user: User, token: string) => {
+  const handleAuthenticated = (user: User, token: string, role: UserRole) => {
     setCurrentUser(user)
     setSessionToken(token)
+    setCurrentRole(role)
   }
 
   const handleLogout = async () => {
@@ -272,6 +276,7 @@ function App() {
       clearSession()
       setCurrentUser(null)
       setSessionToken(null)
+      setCurrentRole('PATIENT')
     }
   }
 
@@ -290,6 +295,7 @@ function App() {
         if (active) {
           setCurrentUser(user)
           setSessionToken(storedSession.token)
+          setCurrentRole(storedSession.role)
         }
       } catch {
         clearSession()
@@ -381,6 +387,16 @@ function App() {
             : recognitionState === 'error'
               ? recognitionError
               : '인식을 시작하면 이곳에 문장이 표시돼요.'
+
+  if (currentUser && sessionToken && currentRole === 'STAFF') {
+    return (
+      <MedicalDashboard
+        user={currentUser}
+        sessionToken={sessionToken}
+        onLogout={() => void handleLogout()}
+      />
+    )
+  }
 
   return (
     <div className="app-shell">
