@@ -10,6 +10,8 @@
 - FastAPI v1 비동기 영상 업로드·추론 Job 연결
 - 백엔드 liveness/readiness 상태 확인
 - 일반 사용자 회원가입, 로그인, 세션 복원, 로그아웃
+- 환자·의료진 로그인 화면 및 역할별 화면 분기
+- 의료진용 병동 대시보드, 요청 확인·처리, 환자 상세·립리딩 기록 조회
 - 640x360 무음 영상을 3~10초간 녹화해 MP4 또는 WebM으로 전송
 - 인식 시작/중지, Job 상태 폴링, 서버 오류, 최종 문장과 신뢰도 표시
 - 인식 결과 Web Speech API 읽어주기
@@ -48,6 +50,7 @@ npm run dev
 | 변수 | 기본값 | 설명 |
 |---|---|---|
 | `VITE_API_BASE_URL` | `http://localhost:8000` | health, 인증, 영상 인식 HTTP API origin |
+| `VITE_DEFAULT_WARD_CODE` | `WARD-3` | 의료진 대시보드에서 조회할 병동 코드 |
 
 로컬 프론트 주소는 백엔드의 `ALLOWED_ORIGINS`에 포함되어야 합니다. 기본 구성은 `http://localhost:5173`을 허용합니다.
 
@@ -71,8 +74,16 @@ npm run dev
 | `POST` | `/api/v1/auth/logout` | 로그인 세션 무효화 |
 | `POST` | `/api/v1/recognition/videos` | 녹화 영상 업로드와 추론 Job 생성 |
 | `GET` | `/api/v1/inference-jobs/{job_id}` | 추론 상태와 최종 결과 조회 |
+| `GET` | `/api/v1/dashboard/summary` | 의료진 대시보드 요약과 최근 요청 조회 |
+| `GET` | `/api/v1/requests` | 병동 요청 목록 조회 |
+| `POST` | `/api/v1/requests/{request_id}/acknowledge` | 의료진 요청 확인 처리 |
+| `POST` | `/api/v1/requests/{request_id}/complete` | 의료진 요청 완료 처리 |
+| `GET` | `/api/v1/patients` | 병동 환자 상태 보드 조회 |
+| `GET` | `/api/v1/patients/{patient_id}` | 환자 상세 정보 조회 |
+| `GET` | `/api/v1/patients/{patient_id}/requests` | 환자별 립리딩 기록 조회 |
 
 로그인 세션 토큰은 브라우저 탭의 `sessionStorage`에만 보관하며 인증 HTTP 요청의 `X-Session-Token` 헤더로 전송합니다.
+의료진 역할은 로그인 화면에서 선택해 프론트 세션에 보관하며, 실제 병동 데이터 접근 권한은 백엔드가 세션 사용자와 담당 병동을 기준으로 검증합니다.
 
 ## 기술 스택
 
