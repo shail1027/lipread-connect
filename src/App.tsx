@@ -8,6 +8,7 @@ import {
   LogOut,
   Mic2,
   RefreshCw,
+  ScanFace,
   Server,
   ShieldCheck,
   UserRound,
@@ -70,6 +71,7 @@ function App() {
   const progressTimerRef = useRef<number | null>(null)
   const autoStopTimerRef = useRef<number | null>(null)
   const minimumStopTimerRef = useRef<number | null>(null)
+  const positionGuideTimerRef = useRef<number | null>(null)
   const pollAbortRef = useRef<AbortController | null>(null)
   const [cameraState, setCameraState] = useState<CameraState>('idle')
   const [cameraError, setCameraError] = useState('')
@@ -85,6 +87,18 @@ function App() {
   const [authDialogOpen, setAuthDialogOpen] = useState(false)
   const [serverState, setServerState] = useState<ServerState>('checking')
   const [serverStateDetail, setServerStateDetail] = useState('서버 상태 확인 중')
+  const [positionGuideVisible, setPositionGuideVisible] = useState(false)
+
+  const showPositionGuide = () => {
+    if (positionGuideTimerRef.current !== null) {
+      window.clearTimeout(positionGuideTimerRef.current)
+    }
+    setPositionGuideVisible(true)
+    positionGuideTimerRef.current = window.setTimeout(() => {
+      setPositionGuideVisible(false)
+      positionGuideTimerRef.current = null
+    }, 3200)
+  }
 
   const clearRecordingTimers = () => {
     if (progressTimerRef.current !== null) {
@@ -111,6 +125,10 @@ function App() {
 
   const stopCamera = () => {
     disposeRecognition()
+    if (positionGuideTimerRef.current !== null) {
+      window.clearTimeout(positionGuideTimerRef.current)
+      positionGuideTimerRef.current = null
+    }
     streamRef.current?.getTracks().forEach((track) => track.stop())
     streamRef.current = null
     if (videoRef.current) videoRef.current.srcObject = null
@@ -119,6 +137,7 @@ function App() {
     setRecognitionError('')
     setElapsedMs(0)
     setStopQueued(false)
+    setPositionGuideVisible(false)
   }
 
   const startCamera = async () => {
@@ -146,6 +165,7 @@ function App() {
         await videoRef.current.play()
       }
       setCameraState('active')
+      showPositionGuide()
     } catch (error) {
       const denied = error instanceof DOMException && error.name === 'NotAllowedError'
       setCameraError(
@@ -163,6 +183,7 @@ function App() {
       setAuthDialogOpen(true)
       return
     }
+    showPositionGuide()
     void startCamera()
   }
 
@@ -175,6 +196,7 @@ function App() {
     clearRecordingTimers()
     setElapsedMs(Math.min(recorder.elapsedMs, MAX_RECORDING_MS))
     setStopQueued(false)
+    showPositionGuide()
     setRecognitionState('uploading')
     const abortController = new AbortController()
     pollAbortRef.current = abortController
@@ -351,6 +373,9 @@ function App() {
       pollAbortRef.current?.abort()
       streamRef.current?.getTracks().forEach((track) => track.stop())
       window.speechSynthesis?.cancel()
+      if (positionGuideTimerRef.current !== null) {
+        window.clearTimeout(positionGuideTimerRef.current)
+      }
     },
     [],
   )
@@ -449,6 +474,13 @@ function App() {
             <div className={`video-stage ${cameraActive ? 'is-live' : ''}`}>
               <video ref={videoRef} playsInline muted aria-label="미러링된 카메라 화면" />
               {cameraActive && <div className="face-guide"><span>얼굴을 이 안에 맞춰 주세요</span></div>}
+              {positionGuideVisible && (
+                <div className="position-guide" role="status">
+                  <span><ScanFace size={24} /></span>
+                  <div><strong>얼굴을 조금 더 가까이 해주세요</strong><small>입술이 가이드 영역 안에서 충분히 크게 보이도록 맞춰주세요.</small></div>
+                  <button onClick={() => setPositionGuideVisible(false)}>확인</button>
+                </div>
+              )}
               {!cameraActive && (
                 <div className="camera-placeholder">
                   <div className="camera-icon"><Camera size={34} /></div>
